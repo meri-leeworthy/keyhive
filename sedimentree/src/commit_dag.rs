@@ -1,4 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 use crate::{Digest, LooseCommit};
 
@@ -248,7 +252,7 @@ impl CommitDag {
         };
 
         for (child_idx, commit) in remaining_commits.into_iter().enumerate() {
-            for parent in self.parents_of_hash(commit) {
+            for parent in self.parents(&commit) {
                 if let Some(parent) = dag.node_map.get(&parent) {
                     dag.add_edge(*parent, NodeIdx(child_idx));
                 }
@@ -267,17 +271,17 @@ impl CommitDag {
         })
     }
 
-    fn parents(&self, node: NodeIdx) -> impl Iterator<Item = NodeIdx> + '_ {
+    fn parents_of_node(&self, node: NodeIdx) -> impl Iterator<Item = NodeIdx> + '_ {
         Parents::new(self, node)
     }
 
-    fn parents_of_hash(&self, hash: Digest) -> impl Iterator<Item = Digest> + '_ {
-        self.node_map
-            .get(&hash)
-            .map(|idx| self.parents(*idx).map(|i| self.nodes[i.0].hash))
-            .into_iter()
-            .flatten()
-    }
+    // fn parents_of_hash(&self, hash: Digest) -> impl Iterator<Item = Digest> + '_ {
+    //     self.node_map
+    //         .get(&hash)
+    //         .map(|idx| self.parents(*idx).map(|i| self.nodes[i.0].hash))
+    //         .into_iter()
+    //         .flatten()
+    // }
 
     fn reverse_topo(&self, start: NodeIdx) -> impl Iterator<Item = Digest> + '_ {
         ReverseTopo::new(self, start)
@@ -287,86 +291,160 @@ impl CommitDag {
         self.node_map.contains_key(commit)
     }
 
-    pub fn heads(&self) -> impl Iterator<Item = Digest> + '_ {
-        self.nodes.iter().filter_map(|node| {
+    /// All the commit hashes in this dag plus the stratum in the order in which they should
+    /// be bundled into strata
+    // pub fn canonical_sequence<'a, I: Iterator<Item = &'a Stratum> + Clone + 'a>(
+    //     &'a self,
+    //     strata: I,
+    // ) -> impl Iterator<Item = Digest> + 'a {
+    //     // First find the tips of the DAG, which is the heads of the commit DAG,
+    //     // plus the end hashes of any strata which are not contained in the
+    //     // commit DAG
+    //     let mut heads = self
+    //         .heads()
+    //         .chain(
+    //             strata
+    //                 .clone()
+    //                 .filter_map(|s| {
+    //                     if !self.contains_commit(&s.end()) {
+    //                         Some(s.end())
+    //                     } else {
+    //                         None
+    //                     }
+    //                 })
+    //                 .collect::<Vec<_>>(),
+    //         )
+    //         .collect::<Vec<_>>();
+    //     heads.sort();
+
+    //     // Then for each tip, do a reverse depth first traversal. When we reach
+    //     // a commit which has a parent which is in a stratum, we just extend the
+    //     // traversal with the commits and checkpoints from the given stratum
+    //     heads.into_iter().flat_map(move |head| {
+    //         let mut stack = vec![head];
+    //         let mut visited = HashSet::new();
+    //         let strata = strata.clone();
+    //         std::iter::from_fn(move || {
+    //             while let Some(commit) = stack.pop() {
+    //                 if visited.contains(&commit) {
+    //                     continue;
+    //                 }
+    //                 visited.insert(commit);
+    //                 if let Some(idx) = self.node_map.get(&commit) {
+    //                     let mut parents = self
+    //                         .parents(*idx)
+    //                         .map(|i| self.nodes[i.0].hash)
+    //                         .collect::<Vec<_>>();
+    //                     parents.sort();
+    //                     stack.extend(parents);
+    //                 } else {
+    //                     let mut supporting_strata = strata
+    //                         .clone()
+    //                         .filter(|s| s.end() == commit)
+    //                         .collect::<Vec<_>>();
+    //                     supporting_strata.sort_by_key(|s| s.level());
+    //                     supporting_strata.reverse();
+    //                     if let Some(stratum) = supporting_strata.pop() {
+    //                         for commit in stratum.checkpoints() {
+    //                             stack.push(*commit);
+    //                         }
+    //                         stack.push(stratum.start());
+    //                     }
+    //                 }
+    //                 return Some(commit);
+    //             }
+    //             None
+    //         })
+    //     })
+    // }
+
+    #[cfg(test)]
+    fn commit_hashes(&self) -> impl Iterator<Item = Digest> + '_ {
+        self.nodes.iter().map(|node| node.hash)
+    }
+}
+
+pub trait CommitWalker {
+    type CommitId: Ord + Clone + Eq + std::hash::Hash;
+
+    fn heads(&self) -> Box<dyn Iterator<Item = Self::CommitId> + '_>;
+    fn contains_commit(&self, id: &Self::CommitId) -> bool;
+    fn parents(&self, id: &Self::CommitId) -> Box<dyn Iterator<Item = Self::CommitId>>;
+    fn all_commits(&self) -> impl Iterator<Item = Self::CommitId>;
+
+    fn canonical_sequence(&self) -> Box<dyn Iterator<Item = Self::CommitId> + '_> {
+        let visited = Rc::new(RefCell::new(HashSet::new()));
+        let mut heads = self.heads().collect::<Vec<_>>();
+        heads.sort(); // deterministic ordering
+
+        Box::new(heads.into_iter().flat_map(move |head| {
+            let mut stack = vec![head.clone()];
+            let local_visited = RefCell::new(HashSet::new());
+            let visited = Rc::clone(&visited); // ✅ clone reference to shared state
+
+            std::iter::from_fn(move || {
+                while let Some(current) = stack.pop() {
+                    if !local_visited.borrow_mut().insert(current.clone()) {
+                        continue;
+                    }
+
+                    let mut parents: Vec<_> = self.parents(&current).collect();
+                    parents.sort();
+                    stack.extend(parents);
+
+                    let mut visited = visited.borrow_mut();
+                    if visited.insert(current.clone()) {
+                        return Some(current);
+                    }
+                }
+                None
+            })
+        }))
+    }
+}
+
+impl CommitWalker for CommitDag {
+    type CommitId = Digest;
+
+    fn heads(&self) -> Box<dyn Iterator<Item = Self::CommitId> + '_> {
+        Box::new(self.nodes.iter().filter_map(|node| {
             if node.children.is_none() {
                 Some(node.hash)
             } else {
                 None
             }
-        })
+        }))
     }
 
-    /// All the commit hashes in this dag plus the stratum in the order in which they should
-    /// be bundled into strata
-    pub fn canonical_sequence<'a, I: Iterator<Item = &'a Stratum> + Clone + 'a>(
-        &'a self,
-        strata: I,
-    ) -> impl Iterator<Item = Digest> + 'a {
-        // First find the tips of the DAG, which is the heads of the commit DAG,
-        // plus the end hashes of any strata which are not contained in the
-        // commit DAG
-        let mut heads = self
-            .heads()
-            .chain(
-                strata
-                    .clone()
-                    .filter_map(|s| {
-                        if !self.contains_commit(&s.end()) {
-                            Some(s.end())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>(),
-            )
-            .collect::<Vec<_>>();
-        heads.sort();
+    fn contains_commit(&self, id: &Self::CommitId) -> bool {
+        self.node_map.contains_key(id)
+    }
 
-        // Then for each tip, do a reverse depth first traversal. When we reach
-        // a commit which has a parent which is in a stratum, we just extend the
-        // traversal with the commits and checkpoints from the given stratum
-        heads.into_iter().flat_map(move |head| {
-            let mut stack = vec![head];
-            let mut visited = HashSet::new();
-            let strata = strata.clone();
-            std::iter::from_fn(move || {
-                while let Some(commit) = stack.pop() {
-                    if visited.contains(&commit) {
-                        continue;
-                    }
-                    visited.insert(commit);
-                    if let Some(idx) = self.node_map.get(&commit) {
-                        let mut parents = self
-                            .parents(*idx)
-                            .map(|i| self.nodes[i.0].hash)
-                            .collect::<Vec<_>>();
-                        parents.sort();
-                        stack.extend(parents);
-                    } else {
-                        let mut supporting_strata = strata
-                            .clone()
-                            .filter(|s| s.end() == commit)
-                            .collect::<Vec<_>>();
-                        supporting_strata.sort_by_key(|s| s.level());
-                        supporting_strata.reverse();
-                        if let Some(stratum) = supporting_strata.pop() {
-                            for commit in stratum.checkpoints() {
-                                stack.push(*commit);
-                            }
-                            stack.push(stratum.start());
-                        }
-                    }
-                    return Some(commit);
+    fn parents(&self, id: &Self::CommitId) -> Box<dyn Iterator<Item = Self::CommitId>> {
+        match self.node_map.get(id) {
+            Some(&node_idx) => {
+                let parent_hashes = Parents::new(self, node_idx)
+                    .map(|idx| self.nodes[idx.0].hash)
+                    .collect::<Vec<_>>();
+                Box::new(parent_hashes.into_iter())
+            }
+            None => Box::new(std::iter::empty()),
+        }
+    }
+
+    fn all_commits(&self) -> impl Iterator<Item = Self::CommitId> {
+        let mut seen = HashSet::new();
+        let mut stack = self.heads().collect::<Vec<_>>();
+        std::iter::from_fn(move || {
+            while let Some(id) = stack.pop() {
+                if !seen.insert(id.clone()) {
+                    continue;
                 }
-                None
-            })
+                stack.extend(self.parents(&id));
+                return Some(id);
+            }
+            None
         })
-    }
-
-    #[cfg(test)]
-    fn commit_hashes(&self) -> impl Iterator<Item = Digest> + '_ {
-        self.nodes.iter().map(|node| node.hash)
     }
 }
 
@@ -396,7 +474,7 @@ impl Iterator for ReverseTopo<'_> {
                 continue;
             }
             self.visited.insert(node);
-            let mut parents = self.dag.parents(node).collect::<Vec<_>>();
+            let mut parents = self.dag.parents_of_node(node).collect::<Vec<_>>();
             parents.sort_by_key(|p| self.dag.nodes[p.0].hash);
             self.stack.extend(parents);
             return Some(self.dag.nodes[node.0].hash);
@@ -439,7 +517,7 @@ mod tests {
 
     use super::{
         super::{LooseCommit, Stratum},
-        CommitDag,
+        CommitDag, CommitWalker,
     };
     use std::collections::{HashMap, HashSet};
 
@@ -713,7 +791,7 @@ mod tests {
         );
         let graph = CommitDag::from_commits(vec![&a, &b, &c, &d].into_iter());
         assert_eq!(
-            graph.parents_of_hash(c.digest()).collect::<HashSet<_>>(),
+            graph.parents(&c.digest()).collect::<HashSet<_>>(),
             vec![a.digest(), b.digest()]
                 .into_iter()
                 .collect::<HashSet<_>>()

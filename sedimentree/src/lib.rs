@@ -5,6 +5,7 @@ mod commit_dag;
 pub mod storage;
 
 pub use blob::*;
+pub use commit_dag::{CommitDag, CommitWalker};
 
 pub const TOP_STRATA_LEVEL: Level = Level(2);
 
@@ -441,7 +442,9 @@ impl Sedimentree {
         let dag = commit_dag::CommitDag::from_commits(self.commits.iter());
         let mut runs_by_level = BTreeMap::<Level, (Digest, Vec<Digest>)>::new();
         let mut all_bundles = Vec::new();
-        for commit_hash in dag.canonical_sequence(self.strata.iter()) {
+
+        // what are the implications of not passing in the strata? self.strata.iter()
+        for commit_hash in dag.canonical_sequence() {
             let level = Level::from(commit_hash);
             for (run_level, (_start, checkpoints)) in runs_by_level.iter_mut() {
                 if run_level < &level {
