@@ -72,8 +72,8 @@ export class UI {
   }
 
   private setupEventListeners() {
-    const initBtn = document.getElementById('init-btn')!;
-    const initSecondBtn = document.getElementById('init-alice-btn')!;
+    const initBtn = document.getElementById('init-btn')! as any;
+    const initSecondBtn = document.getElementById('init-alice-btn')! as any;
     const createGroupBtn = document.getElementById('create-group-btn')!;
     const addMemberBtn = document.getElementById('add-member-btn')!;
     const removeMemberBtn = document.getElementById('remove-member-btn')!;
@@ -95,7 +95,7 @@ export class UI {
     // Enable import button when there's text in the import textarea
     const importTextarea = document.getElementById('contact-card-import')! as HTMLTextAreaElement;
     importTextarea.addEventListener('input', () => {
-      document.getElementById('import-contact-card-btn')!.disabled = importTextarea.value.trim() === '';
+      (document.getElementById('import-contact-card-btn')! as any).disabled = importTextarea.value.trim() === '';
     });
   }
 
@@ -104,7 +104,7 @@ export class UI {
       this.log('Initializing Keyhive instance Bob...');
       this.updateStatus('Initializing instance Bob...');
 
-      const instance = await this.managerBob.initialize();
+      await this.managerBob.initialize();
       const id = this.managerBob.getKeyhiveId();
 
       this.log(`Instance Bob initialized with ID: ${this.decimalArrayToHexString(this.convertBufferToArray(id))}`);
@@ -113,8 +113,8 @@ export class UI {
       `;
 
       this.updateStatus('Instance Bob ready');
-      document.getElementById('init-alice-btn')!.disabled = false;
-      document.getElementById('create-group-btn')!.disabled = false;
+      (document.getElementById('init-alice-btn')! as any).disabled = false;
+      (document.getElementById('create-group-btn')! as any).disabled = false;
 
     } catch (error) {
       console.error('Error initializing instance Bob:', error);
@@ -211,7 +211,7 @@ export class UI {
 
       // Enable add member button if we have an imported ContactCard
       if (this.importedAgent) {
-        document.getElementById('add-member-btn')!.disabled = false;
+        (document.getElementById('add-member-btn')! as any).disabled = false;
       }
 
     } catch (error) {
@@ -277,7 +277,7 @@ export class UI {
       document.getElementById('member-list')!.innerHTML = this.formatMembers(members);
 
       this.updateStatus('Member added');
-      document.getElementById('remove-member-btn')!.disabled = false;
+      (document.getElementById('remove-member-btn')! as any).disabled = false;
 
     } catch (error) {
       console.log("error", error)
@@ -323,7 +323,7 @@ export class UI {
       document.getElementById('member-list')!.innerHTML = this.formatMembers(members);
 
       this.updateStatus('Member removed');
-      document.getElementById('remove-member-btn')!.disabled = true;
+      (document.getElementById('remove-member-btn')! as any).disabled = true;
 
     } catch (error) {
       this.log(`Error removing member: ${error}`);
@@ -392,7 +392,7 @@ export class UI {
 
       // Enable add member button if we have a group
       if (this.currentGroup) {
-        document.getElementById('add-member-btn')!.disabled = false;
+        (document.getElementById('add-member-btn')! as any).disabled = false;
       }
 
     } catch (error) {
