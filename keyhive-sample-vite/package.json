@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "wasm-pack build ../keyhive_wasm --release --target=web && tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview --host"
   },
   "devDependencies": {
     "typescript": "~5.8.3",
